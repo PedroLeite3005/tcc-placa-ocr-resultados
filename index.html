@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OCR de Placas na Jetson — Resultados</title>
+  <meta name="description" content="Todas as métricas do TCC: fusão e compressão de modelos de reconhecimento de placas em baixa resolução na NVIDIA Jetson Nano.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div>
+        <p class="eyebrow">TCC · Bacharelado em Ciência da Computação · PUCPR</p>
+        <h1>Fusão e compressão de modelos de OCR de placas em baixa resolução na Jetson Nano</h1>
+        <p class="authors">Felipe Augusto Baleche, Giuseppe Filippin, Isabelle Kulczynskyj, Johan Stromberg e Pedro Bastos</p>
+      </div>
+      <div class="header-actions">
+        <a class="btn" id="link-article" href="artigo.pdf" target="_blank" rel="noopener">Artigo (PDF)</a>
+        <a class="btn" id="link-repo" href="#" target="_blank" rel="noopener">Código no GitHub</a>
+        <button class="btn btn-ghost" id="theme-toggle" type="button" aria-label="Alternar tema claro/escuro">Tema</button>
+      </div>
+    </div>
+    <nav class="wrap section-nav" aria-label="Seções">
+      <a href="#resumo">Resumo</a>
+      <a href="#tradeoff">Acurácia × vazão</a>
+      <a href="#compressao">Compressão</a>
+      <a href="#fusao">Fusão</a>
+      <a href="#parseq">PARSeq</a>
+      <a href="#pruning">Pruning</a>
+      <a href="#termica">Temperatura</a>
+      <a href="#desktop">Desktop × Jetson</a>
+      <a href="#tabela">Todas as execuções</a>
+      <a href="#metodo">Método</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section id="resumo">
+      <h2>Resumo</h2>
+      <p class="lead">Três modelos de reconhecimento de texto (CRNN, SVTR-Tiny e PARSeq-Tiny) foram treinados uma única vez em um <em>desktop</em> com o conjunto LRLPR-26 (desafio ICPR 2026, placas brasileiras em baixa resolução) e executados apenas para inferência em uma <strong>NVIDIA Jetson Nano</strong>. Sobre os mesmos pesos, foram avaliadas a <strong>fusão</strong> das cinco imagens de cada veículo, o <strong><em>ensemble</em></strong> entre modelos e quatro técnicas de <strong>compressão</strong> (FP16, INT8, <em>pruning</em> e TensorRT), medindo acurácia, FPS, memória, temperatura e energia no dispositivo. Esta página reúne <strong>todas</strong> as medições — o pôster mostra só os destaques.</p>
+      <div class="tiles" id="tiles"></div>
+      <div class="cards-2">
+        <div class="card">
+          <h3>O que foi feito</h3>
+          <ol class="steps">
+            <li><strong>Treino</strong> no desktop (RTX 4060) dos três modelos, em cor e com entrada binarizada.</li>
+            <li><strong>Inferência na Jetson</strong> no teste completo (3.000 veículos, 15.000 imagens), uma imagem por vez.</li>
+            <li><strong>Fusão</strong> das 5 imagens de cada veículo (HC, MV e MVCP) e <strong><em>ensemble</em></strong> entre modelos.</li>
+            <li><strong>Compressão</strong> aplicada depois do treino, sem retreino: FP16, INT8, <em>pruning</em> 30/50/70% e TensorRT.</li>
+            <li><strong>Decodificação</strong> do PARSeq (AR, NAR, NAR+1) e duas <strong>resoluções</strong> de entrada.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3>Hardware</h3>
+          <div class="table-scroll">
+            <table class="data compact">
+              <thead><tr><th></th><th>Desktop (treino)</th><th>Jetson Nano (inferência)</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">CPU</th><td>AMD Ryzen 7 5700X</td><td>ARM Cortex-A57, 4 núcleos, 1,43 GHz</td></tr>
+                <tr><th scope="row">GPU</th><td>RTX 4060 (8 GB)</td><td>Maxwell, 128 núcleos CUDA</td></tr>
+                <tr><th scope="row">Memória</th><td>16 GB</td><td>4 GB compartilhados CPU/GPU</td></tr>
+                <tr><th scope="row">Software</th><td>PyTorch</td><td>JetPack 4.6.6, PyTorch 1.10, TensorRT 8.2</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tradeoff">
+      <h2>Acurácia × vazão</h2>
+      <p>Cada ponto é uma configuração: acurácia por veículo (fusão MVCP das 5 imagens) contra placas processadas por segundo. A linha liga as configurações que nenhuma outra supera nas duas coisas ao mesmo tempo (fronteira de Pareto). No <em>ensemble</em>, a vazão é <strong>estimada</strong> pela soma das latências dos modelos.</p>
+      <div class="filters" role="group" aria-label="Filtros do gráfico">
+        <label><input type="checkbox" id="tr-bin"> incluir entrada binarizada</label>
+        <label><input type="checkbox" id="tr-fp16"> incluir FP16</label>
+      </div>
+      <div class="card chart-card"><div id="chart-tradeoff" class="chart"></div></div>
+      <details class="table-view"><summary>Ver como tabela</summary><div id="table-tradeoff" class="table-scroll"></div></details>
+    </section>
+
+    <section id="compressao">
+      <h2>Compressão: quanto cada técnica mudou</h2>
+      <p>Escolha o modelo: cada linha compara a técnica com o modelo original, com a variação em relação a ele. A quantização INT8 não executa na Jetson Nano (a GPU Maxwell não tem INT8 e o PyTorch da Jetson não tem <em>backend</em> quantizado), e o TensorRT 8.2 não conseguiu compilar o PARSeq.</p>
+      <div class="filters" role="group" aria-label="Escolha do modelo">
+        <label>Modelo <select id="cmp-model"></select></label>
+        <label>Entrada <select id="cmp-input"><option value="cor">cor</option><option value="binarizada">binarizada</option></select></label>
+      </div>
+      <div class="card chart-card"><h3 class="chart-title">FPS por técnica</h3><div id="chart-compress" class="chart"></div></div>
+      <div id="table-compress" class="table-scroll"></div>
+      <p class="note">Variações: <span class="delta good">▲</span> melhorou, <span class="delta bad">▼</span> piorou (para memória, tamanho e energia, menor é melhor). O <em>pruning</em> foi medido na rodada 1, sem refrigeração — por isso seu FPS é comparado com o original da mesma rodada.</p>
+    </section>
+
+    <section id="fusao">
+      <h2>Fusão das imagens e <em>ensemble</em></h2>
+      <p>Acurácia por veículo de cada modelo com uma imagem só e com as três estratégias de fusão das 5 imagens: <strong>HC</strong> (fica a predição de maior confiança), <strong>MV</strong> (voto na placa inteira) e <strong>MVCP</strong> (voto caractere a caractere).</p>
+      <div class="card chart-card"><div id="chart-fusion" class="chart"></div></div>
+      <details class="table-view"><summary>Ver como tabela</summary><div id="table-fusion" class="table-scroll"></div></details>
+      <h3>Todos os <em>ensembles</em></h3>
+      <div class="filters" role="group" aria-label="Filtro de ensembles">
+        <label>Grupo <select id="ens-group"></select></label>
+      </div>
+      <div id="table-ensembles" class="table-scroll"></div>
+    </section>
+
+    <section id="parseq">
+      <h2>PARSeq: decodificação e resolução de entrada</h2>
+      <p>O mesmo modelo decodifica de três jeitos sem retreino: <strong>AR</strong> (um caractere por passo), <strong>NAR</strong> (todos de uma vez) e <strong>NAR+1</strong> (todos de uma vez + uma iteração de refinamento). Treinado em 64×256, ele ficou pior e mais lento que na resolução nativa, 32×128.</p>
+      <div class="cards-2">
+        <div class="card chart-card"><h3 class="chart-title">Acurácia por veículo (%)</h3><div id="chart-parseq-acc" class="chart"></div></div>
+        <div class="card chart-card"><h3 class="chart-title">FPS</h3><div id="chart-parseq-fps" class="chart"></div></div>
+      </div>
+      <div id="table-parseq" class="table-scroll"></div>
+    </section>
+
+    <section id="pruning">
+      <h2><em>Pruning</em> sem ajuste fino</h2>
+      <p>A poda zera a fração indicada dos pesos de menor magnitude. O FPS não muda (as matrizes continuam densas); o arquivo comprimido encolhe, mas a acurácia despenca a partir de 50%.</p>
+      <div class="filters" role="group" aria-label="Entrada">
+        <label>Entrada <select id="pr-input"><option value="cor">cor</option><option value="binarizada">binarizada</option></select></label>
+      </div>
+      <div class="cards-2">
+        <div class="card chart-card"><h3 class="chart-title">Acurácia por imagem (%)</h3><div id="chart-prune-acc" class="chart"></div></div>
+        <div class="card chart-card"><h3 class="chart-title">Tamanho com gzip (MB)</h3><div id="chart-prune-size" class="chart"></div></div>
+      </div>
+      <details class="table-view"><summary>Ver como tabela</summary><div id="table-prune" class="table-scroll"></div></details>
+    </section>
+
+    <section id="termica">
+      <h2>Efeito da temperatura</h2>
+      <p>Na rodada 1, com a ventoinha em modo automático, a placa chegou a ~95 °C e reduziu os relógios (<em>throttling</em>). Com ventoinha no máximo e espera até 55 °C antes de cada execução (rodadas 2 e 3), o FPS subiu sem mudar a acurácia.</p>
+      <div class="card chart-card"><h3 class="chart-title">FPS — modelos originais em cor</h3><div id="chart-thermal" class="chart"></div></div>
+      <details class="table-view"><summary>Ver como tabela</summary><div id="table-thermal" class="table-scroll"></div></details>
+    </section>
+
+    <section id="desktop">
+      <h2>Desktop × Jetson</h2>
+      <p>Os mesmos pesos dão a mesma acurácia nas duas plataformas: portar para a Jetson muda só o custo.</p>
+      <div id="table-desktop" class="table-scroll"></div>
+    </section>
+
+    <section id="tabela">
+      <h2>Todas as execuções</h2>
+      <p>Uma linha por execução no conjunto de teste completo. Clique no cabeçalho para ordenar.</p>
+      <div class="filters" role="group" aria-label="Filtros da tabela">
+        <label>Rodada <select id="f-round"></select></label>
+        <label>Modelo <select id="f-model"></select></label>
+        <label>Entrada <select id="f-input"></select></label>
+        <label>Técnica <select id="f-tech"></select></label>
+        <a class="btn" id="download-csv" href="data/execucoes.csv" download>Baixar CSV</a>
+      </div>
+      <p class="note" id="f-count"></p>
+      <div id="table-all" class="table-scroll tall"></div>
+    </section>
+
+    <section id="metodo">
+      <h2>Método e limitações</h2>
+      <div class="cards-2">
+        <div class="card">
+          <h3>Como foi medido</h3>
+          <ul>
+            <li>Teste completo do LRLPR-26: 3.000 veículos, 5 imagens de baixa resolução cada (15.000 imagens).</li>
+            <li>Uma imagem por vez (lote 1); os 3 primeiros lotes são descartados como aquecimento.</li>
+            <li>FPS e latência cronometram inferência + decodificação, sem leitura e pré-processamento.</li>
+            <li>Jetson em MAXN (10 W), <code>jetson_clocks</code>, ventoinha no máximo e espera até 55 °C antes de cada execução (rodadas 2 e 3).</li>
+            <li>Potência e temperatura amostradas a cada 0,5 s (<code>jetson-stats</code>); energia integrada ao longo da execução inteira.</li>
+            <li>Placas/s = FPS ÷ 5 (cada veículo usa as 5 imagens).</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Leia com cuidado</h3>
+          <ul>
+            <li><strong>FPS do <em>ensemble</em> é estimado</strong> pela soma das latências dos modelos medidos separadamente, não medido num pipeline único.</li>
+            <li><strong>Energia por imagem</strong> inclui leitura e pré-processamento (por isso é ~12% maior que potência ÷ FPS).</li>
+            <li><strong>Gargalo:</strong> os resultados indicam que, com lote 1, o limite é a sobrecarga de disparar cada operação pela CPU, não o cálculo na GPU — hipótese sustentada indiretamente, sem <em>profiling</em>.</li>
+            <li><strong>Validação otimista:</strong> o treino/validação foi dividido por veículo, não por placa; 21% das placas da validação aparecem no treino. O teste não tem essa sobreposição.</li>
+            <li><strong>Rodada 1</strong> (sem refrigeração) serve só para <em>pruning</em>: a acurácia não depende da temperatura, mas o FPS sofreu <em>throttling</em>.</li>
+            <li>Avaliado só o reconhecimento; a detecção da placa não faz parte do pipeline medido.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>Dados gerados a partir dos CSVs do repositório em <span id="generated"></span>. Conjunto de dados: LRLPR-26 (ICPR 2026 Competition on Low-Resolution License Plate Recognition).</p>
+    </div>
+  </footer>
+
+  <div id="tooltip" class="tooltip" role="status" aria-live="polite" hidden></div>
+
+  <script src="data/data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
